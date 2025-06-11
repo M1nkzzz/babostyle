@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Jeu multijoueur</title>
+  <style>
+    body, html { margin: 0; height: 100%; background: #222; color: #fff; font-family: sans-serif; }
+    #gameCanvas { display: block; background: #111; }
+    #startScreen {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: rgba(0,0,0,0.85);
+      z-index: 10;
+    }
+    #nameInput {
+      font-size: 20px;
+      padding: 10px;
+      margin-bottom: 10px;
+      width: 300px;
+    }
+    #playButton {
+      font-size: 20px;
+      padding: 10px 20px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div id="joinForm">
+    <input type="text" id="pseudoInput" placeholder="Entrez votre pseudo" />
+    <button id="joinButton">Jouer</button>
+  </div>
+  
+  <canvas id="gameCanvas" style="display:none;"></canvas>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
