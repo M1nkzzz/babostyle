@@ -20,6 +20,8 @@ let playerName = null;
 let showStats = false;
 let drawLoopStarted = false;  // Pour éviter plusieurs boucles
 let sendInputInterval = null; // Pour éviter plusieurs setInterval
+let shooting = false;
+let shootInterval = null;
 
 // Slash effects : objets { x, y, angle, time, maxTime, playerId }
 let slashEffects = [];
@@ -46,7 +48,21 @@ canvas.addEventListener("mousemove", e => {
   mouse.x = e.clientX;
   mouse.y = e.clientY;
 });
-canvas.addEventListener("mousedown", () => socket.emit("shoot"));
+
+canvas.addEventListener("mousedown", () => {
+  if (!shooting) {
+    shooting = true;
+    socket.emit("shoot"); // Premier tir immédiat
+    shootInterval = setInterval(() => {
+      socket.emit("shoot");
+    }, 150); // tir toutes les 150ms, ajuste à ton gameplay
+  }
+});
+
+canvas.addEventListener("mouseup", () => {
+  shooting = false;
+  clearInterval(shootInterval);
+});
 
 // Dessins
 function drawPlayer(p, offsetX, offsetY) {
