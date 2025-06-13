@@ -18,13 +18,12 @@ let mouse = { x: 0, y: 0 };
 let smokeParticles = [];
 let playerName = null;
 let showStats = false;
-let drawLoopStarted = false;  // Pour éviter plusieurs boucles
-let sendInputInterval = null; // Pour éviter plusieurs setInterval
+let drawLoopStarted = false;
+let sendInputInterval = null;
 let shooting = false;
 let shootInterval = null;
-
-// Slash effects : objets { x, y, angle, time, maxTime, playerId }
 let slashEffects = [];
+let hasJoinedGame = false;
 
 // Gestion clavier
 document.addEventListener("keydown", e => {
@@ -49,22 +48,26 @@ canvas.addEventListener("mousemove", e => {
   mouse.y = e.clientY;
 });
 
-canvas.addEventListener("mousedown", () => {
+function startShooting() {
   if (!shooting) {
     shooting = true;
-    socket.emit("shoot"); // Premier tir immédiat
+    socket.emit("shoot"); // tir immédiat
     shootInterval = setInterval(() => {
       socket.emit("shoot");
-    }, 150); // tir toutes les 150ms, ajuste à ton gameplay
+    }, 150);
   }
-});
+}
 
-canvas.addEventListener("mouseup", () => {
+function stopShooting() {
   shooting = false;
   clearInterval(shootInterval);
-});
+}
 
-// Dessins
+canvas.addEventListener("mousedown", startShooting);
+canvas.addEventListener("mouseup", stopShooting);
+canvas.addEventListener("mouseleave", stopShooting);
+
+// Dessin des joueurs, projectiles, effets...
 function drawPlayer(p, offsetX, offsetY) {
   if (p.dead) return;
 
@@ -84,32 +87,33 @@ function drawPlayer(p, offsetX, offsetY) {
   ctx.stroke();
   ctx.restore();
 
+  // Barre de vie
   ctx.fillStyle = "rgba(255,255,255,0.2)";
   ctx.fillRect(p.x + offsetX - 20, p.y + offsetY - 30, 40, 6);
   ctx.fillStyle = "#e74c3c";
   ctx.fillRect(p.x + offsetX - 20, p.y + offsetY - 30, 40 * (p.health / 100), 6);
 
+  // Nom joueur
   ctx.fillStyle = "white";
   ctx.font = "12px sans-serif";
   ctx.textAlign = "center";
   ctx.fillText(p.name || "Anonymous", p.x + offsetX, p.y + offsetY + 35);
 
-  // Cercle de rechargement autour du joueur
-if (p.reloading && p.reloadStartTime) {
-  const reloadDuration = 2000; // 2 secondes
-  const elapsed = performance.now() - p.reloadStartTime;
-  const progress = Math.min(elapsed / reloadDuration, 1);
+  // Cercle rechargement
+  if (p.reloading && p.reloadStartTime) {
+    const reloadDuration = 2000;
+    const elapsed = performance.now() - p.reloadStartTime;
+    const progress = Math.min(elapsed / reloadDuration, 1);
 
-  ctx.save();
-  ctx.translate(p.x + offsetX, p.y + offsetY);
-  ctx.beginPath();
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 4;
-  ctx.arc(0, 0, 14, -Math.PI / 2, -Math.PI / 2 + progress * 2 * Math.PI);
-  ctx.stroke();
-  ctx.restore();
-}
-  
+    ctx.save();
+    ctx.translate(p.x + offsetX, p.y + offsetY);
+    ctx.beginPath();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 4;
+    ctx.arc(0, 0, 14, -Math.PI / 2, -Math.PI / 2 + progress * 2 * Math.PI);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawStats() {
@@ -124,10 +128,8 @@ function drawStats() {
   ctx.font = "16px sans-serif";
   let y = 120;
   sortedPlayers.forEach((p, i) => {
-    const isLocal = p.id === playerId;
-    ctx.fillStyle = isLocal ? "#72c2ff" : "#fff";
-    const name = p.name || "Joueur";
-    ctx.fillText(`${i + 1}. ${name} - Kills: ${p.kills} | Morts: ${p.deaths}`, 70, y);
+    ctx.fillStyle = p.id === playerId ? "#72c2ff" : "#fff";
+    ctx.fillText(`${i + 1}. ${p.name || "Joueur"} - Kills: ${p.kills} | Morts: ${p.deaths}`, 70, y);
     y += 28;
   });
 }
@@ -145,59 +147,38 @@ function drawSmoke(offsetX, offsetY) {
   });
 }
 
-// Effet slash 360° (cercle + lames tournantes)
 function drawKnifeSlashEffect(x, y, time, maxTime, offsetX, offsetY) {
   const halfTime = maxTime / 2;
-  let progress;
-  if (time <= halfTime) {
-    // Aller : la lame s'éloigne
-    progress = time / halfTime; // 0 à 1
-  } else {
-    // Retour : la lame revient
-    progress = (maxTime - time) / halfTime; // 1 à 0
-  }
-
-  const maxRadius = 20; // distance max de la lame au joueur
-  const radius = 20 + progress * maxRadius; // rayon variable selon progress
-
-  const alpha = 1 - (time / maxTime);
-
-  // Nombre de dents sur la lame circulaire
+  let progress = time <= halfTime ? time / halfTime : (maxTime - time) / halfTime;
+  const maxRadius = 20;
+  const radius = 20 + progress * maxRadius;
+  const alpha = 1 - time / maxTime;
   const teethCount = 12;
   const teethLength = 15;
 
   ctx.save();
   ctx.translate(x + offsetX, y + offsetY);
 
-  // Cercle central "base" du couteau
   ctx.beginPath();
   ctx.arc(0, 0, 15, 0, Math.PI * 2);
   ctx.fillStyle = `rgba(100, 100, 100, ${alpha.toFixed(2)})`;
   ctx.fill();
 
-  // Dessin de la lame en dent de scie tout autour
   for (let i = 0; i < teethCount; i++) {
-    const angle = (2 * Math.PI / teethCount) * i + (time * 0.3); // rotation continue
-
-    // Position extérieure de la dent
+    const angle = (2 * Math.PI / teethCount) * i + time * 0.3;
     const outerX = radius * Math.cos(angle);
     const outerY = radius * Math.sin(angle);
-
-    // Position intérieure vers le centre, crée dent de scie
     const innerRadius = radius - teethLength;
     const innerX = innerRadius * Math.cos(angle + 0.05);
     const innerY = innerRadius * Math.sin(angle + 0.05);
+    const midAngle = angle + 0.025;
+    const midRadius = radius + 5 * progress;
+    const midX = midRadius * Math.cos(midAngle);
+    const midY = midRadius * Math.sin(midAngle);
 
     ctx.beginPath();
     ctx.moveTo(innerX, innerY);
     ctx.lineTo(outerX, outerY);
-
-    // Petite "dent" triangulaire
-    const midAngle = angle + 0.025;
-    const midRadius = radius + 5 * progress; // léger allongement au milieu
-    const midX = midRadius * Math.cos(midAngle);
-    const midY = midRadius * Math.sin(midAngle);
-
     ctx.lineTo(midX, midY);
     ctx.closePath();
 
@@ -207,18 +188,21 @@ function drawKnifeSlashEffect(x, y, time, maxTime, offsetX, offsetY) {
     ctx.lineWidth = 1;
     ctx.stroke();
   }
-
   ctx.restore();
 }
 
-
-// Wrapper pour dessiner un slashEffect, pour éviter erreur
 function drawSlashEffect(e, offsetX, offsetY) {
   drawKnifeSlashEffect(e.x, e.y, e.time, e.maxTime, offsetX, offsetY);
   e.time++;
 }
 
 function draw() {
+
+  if (!hasJoinedGame) {
+    requestAnimationFrame(draw);
+    return;
+  }
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (!playerId || !players[playerId]) {
@@ -238,7 +222,7 @@ function draw() {
   Object.values(players).forEach(p => {
     if (p.dead) return;
     let dx = 0, dy = 0;
-    if (p.input) { // protection
+    if (p.input) {
       if (p.input.up) dy -= 1;
       if (p.input.down) dy += 1;
       if (p.input.left) dx -= 1;
@@ -252,13 +236,9 @@ function draw() {
       p.moveDir = { x: dx, y: dy };
       if (p.dashing) {
         for (let i = 0; i < 3; i++) {
-          const spreadX = (Math.random() - 0.5) * 10;
-          const spreadY = (Math.random() - 0.5) * 10;
-          const smokeX = p.x - dx * 25 + spreadX;
-          const smokeY = p.y - dy * 25 + spreadY;
           smokeParticles.push({
-            x: smokeX,
-            y: smokeY,
+            x: p.x - dx * 25 + (Math.random() - 0.5) * 10,
+            y: p.y - dy * 25 + (Math.random() - 0.5) * 10,
             alpha: 1,
             radius: 3 + Math.random() * 3
           });
@@ -280,7 +260,6 @@ function draw() {
 
   drawSmoke(offsetX, offsetY);
 
-  // Effets slash 360°
   slashEffects = slashEffects.filter(e => e.time < e.maxTime);
   slashEffects.forEach(e => {
     const p = players[e.playerId];
@@ -311,6 +290,7 @@ function draw() {
 }
 
 function sendInput() {
+  if (!hasJoinedGame) return;
   if (!playerId || !players[playerId]) return;
 
   const rect = canvas.getBoundingClientRect();
@@ -332,28 +312,33 @@ function sendInput() {
 
 // Socket events
 socket.on("init", data => {
+  if (!hasJoinedGame) return; // ignore tant que pas joinGame
   playerId = data.id;
   players = data.players;
   bullets = data.bullets;
   walls = data.walls;
 });
 
-socket.on("newPlayer", p => players[p.id] = p);
-socket.on("removePlayer", id => delete players[id]);
+socket.on("newPlayer", p => {
+  if (!hasJoinedGame) return; // ignore si pas joinGame
+  players[p.id] = p;
+});
 
-// Mise à jour plus sûre des états (merge pour ne pas perdre propriétés locales)
+socket.on("removePlayer", id => {
+  if (!hasJoinedGame) return;
+  delete players[id];
+});
+
 socket.on("state", state => {
+  if (!hasJoinedGame) return; // ignore tant que pas joinGame
 
-  // Conserver les anciens timestamps de rechargement
+  // Même merge que toi ici
   for (let id in state.players) {
     const newP = state.players[id];
     const oldP = players[id];
-
     if (newP.reloading && (!oldP || !oldP.reloading)) {
-      // Début du rechargement détecté
       newP.reloadStartTime = performance.now();
     } else if (oldP && oldP.reloadStartTime) {
-      // Conserver le temps si déjà commencé
       newP.reloadStartTime = oldP.reloadStartTime;
     }
   }
@@ -369,8 +354,8 @@ socket.on("state", state => {
   walls = state.walls;
 });
 
-// SlashEffect
 socket.on("slashEffect", data => {
+  if (!hasJoinedGame) return;
   slashEffects.push({ 
     playerId: data.playerId,
     x: data.x, 
@@ -389,7 +374,10 @@ function joinGame() {
     return;
   }
   playerName = input.value.trim();
-  socket.emit("setName", playerName);
+  socket.emit("setName", playerName); // Ici, informe le serveur du pseudo et join la partie
+
+  hasJoinedGame = true;
+
   document.getElementById("joinForm").style.display = "none";
   canvas.style.display = "block";
 
@@ -401,9 +389,9 @@ function joinGame() {
   if (!sendInputInterval) {
     sendInputInterval = setInterval(sendInput, 1000 / 60);
   }
-  
-  // Désactive le bouton pour éviter multiples clics
+
   document.getElementById("joinButton").disabled = true;
 }
+
 
 document.getElementById("joinButton").addEventListener("click", joinGame);
