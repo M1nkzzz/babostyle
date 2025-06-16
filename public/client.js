@@ -13,8 +13,8 @@ let playerId = null;
 let players = {};
 let bullets = [];
 let walls = [];
-let keys = {};
-let mouse = { x: 0, y: 0 };
+const keys = {};
+const mouse = { x: 0, y: 0 };
 let smokeParticles = [];
 let playerName = null;
 let showStats = false;
@@ -25,36 +25,13 @@ let shootInterval = null;
 let slashEffects = [];
 let hasJoinedGame = false;
 
-// Gestion clavier
-document.addEventListener("keydown", e => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key.toLowerCase() === "r") socket.emit("reload");
-  if (e.key === "Shift") socket.emit("dash");
-  if (e.key === "Tab") {
-    e.preventDefault();
-    showStats = true;
-  }
-  if (e.key === " ") socket.emit("slash");
-});
 
-document.addEventListener("keyup", e => {
-  keys[e.key.toLowerCase()] = false;
-  if (e.key === "Tab") showStats = false;
-});
-
-// Souris
-canvas.addEventListener("mousemove", e => {
-  mouse.x = e.clientX;
-  mouse.y = e.clientY;
-});
 
 function startShooting() {
   if (!shooting) {
     shooting = true;
-    socket.emit("shoot"); // tir immédiat
-    shootInterval = setInterval(() => {
-      socket.emit("shoot");
-    }, 150);
+    socket.emit("shoot");
+    shootInterval = setInterval(() => socket.emit("shoot"), 150);
   }
 }
 
@@ -63,18 +40,19 @@ function stopShooting() {
   clearInterval(shootInterval);
 }
 
-canvas.addEventListener("mousedown", startShooting);
-canvas.addEventListener("mouseup", stopShooting);
-canvas.addEventListener("mouseleave", stopShooting);
 
 // Dessin des joueurs, projectiles, effets...
 function drawPlayer(p, offsetX, offsetY) {
   if (p.dead) return;
 
+  const { x, y, angle, id, health, name, reloading, reloadStartTime } = p;
+  const isCurrentPlayer = id === playerId;
+  const reloadDuration = 2000;
+
   ctx.save();
-  ctx.translate(p.x + offsetX, p.y + offsetY);
-  ctx.rotate(p.angle);
-  ctx.fillStyle = p.id === playerId ? "#72c2ff" : "#e74c3c";
+  ctx.translate(x + offsetX, y + offsetY);
+  ctx.rotate(angle);
+  ctx.fillStyle = isCurrentPlayer ? "#72c2ff" : "#e74c3c";
   ctx.beginPath();
   ctx.arc(0, 0, 20, 0, Math.PI * 2);
   ctx.fill();
@@ -89,24 +67,23 @@ function drawPlayer(p, offsetX, offsetY) {
 
   // Barre de vie
   ctx.fillStyle = "rgba(255,255,255,0.2)";
-  ctx.fillRect(p.x + offsetX - 20, p.y + offsetY - 30, 40, 6);
+  ctx.fillRect(x + offsetX - 20, y + offsetY - 30, 40, 6);
   ctx.fillStyle = "#e74c3c";
-  ctx.fillRect(p.x + offsetX - 20, p.y + offsetY - 30, 40 * (p.health / 100), 6);
+  ctx.fillRect(x + offsetX - 20, y + offsetY - 30, 40 * (health / 100), 6);
 
   // Nom joueur
   ctx.fillStyle = "white";
   ctx.font = "12px sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(p.name || "Anonymous", p.x + offsetX, p.y + offsetY + 35);
+  ctx.fillText(name || "Anonymous", x + offsetX, y + offsetY + 35);
 
   // Cercle rechargement
-  if (p.reloading && p.reloadStartTime) {
-    const reloadDuration = 2000;
-    const elapsed = performance.now() - p.reloadStartTime;
+  if (reloading && reloadStartTime) {
+    const elapsed = performance.now() - reloadStartTime;
     const progress = Math.min(elapsed / reloadDuration, 1);
 
     ctx.save();
-    ctx.translate(p.x + offsetX, p.y + offsetY);
+    ctx.translate(x + offsetX, y + offsetY);
     ctx.beginPath();
     ctx.strokeStyle = "#ffffff";
     ctx.lineWidth = 4;
@@ -115,6 +92,8 @@ function drawPlayer(p, offsetX, offsetY) {
     ctx.restore();
   }
 }
+
+
 
 function drawStats() {
   ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
@@ -126,11 +105,9 @@ function drawStats() {
 
   const sortedPlayers = Object.values(players).sort((a, b) => b.kills - a.kills);
   ctx.font = "16px sans-serif";
-  let y = 120;
   sortedPlayers.forEach((p, i) => {
     ctx.fillStyle = p.id === playerId ? "#72c2ff" : "#fff";
-    ctx.fillText(`${i + 1}. ${p.name || "Joueur"} - Kills: ${p.kills} | Morts: ${p.deaths}`, 70, y);
-    y += 28;
+    ctx.fillText(`${i + 1}. ${p.name || "Joueur"} - Kills: ${p.kills} | Morts: ${p.deaths}`, 70, 120 + i * 28);
   });
 }
 
@@ -149,9 +126,8 @@ function drawSmoke(offsetX, offsetY) {
 
 function drawKnifeSlashEffect(x, y, time, maxTime, offsetX, offsetY) {
   const halfTime = maxTime / 2;
-  let progress = time <= halfTime ? time / halfTime : (maxTime - time) / halfTime;
-  const maxRadius = 20;
-  const radius = 20 + progress * maxRadius;
+  const progress = time <= halfTime ? time / halfTime : (maxTime - time) / halfTime;
+  const radius = 20 + progress * 20;
   const alpha = 1 - time / maxTime;
   const teethCount = 12;
   const teethLength = 15;
@@ -191,42 +167,33 @@ function drawKnifeSlashEffect(x, y, time, maxTime, offsetX, offsetY) {
   ctx.restore();
 }
 
+
 function drawSlashEffect(e, offsetX, offsetY) {
   drawKnifeSlashEffect(e.x, e.y, e.time, e.maxTime, offsetX, offsetY);
   e.time++;
 }
 
 function draw() {
-
-  if (!hasJoinedGame) {
+  if (!hasJoinedGame || !playerId || !players[playerId]) {
     requestAnimationFrame(draw);
     return;
   }
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (!playerId || !players[playerId]) {
-    requestAnimationFrame(draw);
-    return;
-  }
-
   const player = players[playerId];
   const offsetX = canvas.width / 2 - player.x;
   const offsetY = canvas.height / 2 - player.y;
 
-  walls.forEach(w => {
-    ctx.fillStyle = "#999";
-    ctx.fillRect(w.x + offsetX, w.y + offsetY, w.width, w.height);
-  });
+  ctx.fillStyle = "#999";
+  walls.forEach(w => ctx.fillRect(w.x + offsetX, w.y + offsetY, w.width, w.height));
 
   Object.values(players).forEach(p => {
     if (p.dead) return;
     let dx = 0, dy = 0;
     if (p.input) {
-      if (p.input.up) dy -= 1;
-      if (p.input.down) dy += 1;
-      if (p.input.left) dx -= 1;
-      if (p.input.right) dx += 1;
+      dx = (p.input.left ? -1 : 0) + (p.input.right ? 1 : 0);
+      dy = (p.input.up ? -1 : 0) + (p.input.down ? 1 : 0);
     }
 
     const len = Math.hypot(dx, dy);
@@ -251,8 +218,8 @@ function draw() {
 
   Object.values(players).forEach(p => drawPlayer(p, offsetX, offsetY));
 
+  ctx.fillStyle = "orange";
   bullets.forEach(b => {
-    ctx.fillStyle = "orange";
     ctx.beginPath();
     ctx.arc(b.x + offsetX, b.y + offsetY, 5, 0, Math.PI * 2);
     ctx.fill();
@@ -289,38 +256,15 @@ function draw() {
   requestAnimationFrame(draw);
 }
 
-function sendInput() {
-  if (!hasJoinedGame) return;
-  if (!playerId || !players[playerId]) return;
-
-  const rect = canvas.getBoundingClientRect();
-  const mouseX = mouse.x - rect.left;
-  const mouseY = mouse.y - rect.top;
-  const player = players[playerId];
-  const angle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
-
-  socket.emit("input", {
-    input: {
-      up: keys["z"],
-      down: keys["s"],
-      left: keys["q"],
-      right: keys["d"]
-    },
-    angle
-  });
-}
 
 // Socket events
 socket.on("init", data => {
-  if (!hasJoinedGame) return; // ignore tant que pas joinGame
-  playerId = data.id;
-  players = data.players;
-  bullets = data.bullets;
-  walls = data.walls;
+  if (!hasJoinedGame) return;
+  ({ id: playerId, players, bullets, walls } = data);
 });
 
 socket.on("newPlayer", p => {
-  if (!hasJoinedGame) return; // ignore si pas joinGame
+  if (!hasJoinedGame) return;
   players[p.id] = p;
 });
 
@@ -330,10 +274,9 @@ socket.on("removePlayer", id => {
 });
 
 socket.on("state", state => {
-  if (!hasJoinedGame) return; // ignore tant que pas joinGame
+  if (!hasJoinedGame) return;
 
-  // Même merge que toi ici
-  for (let id in state.players) {
+  for (const id in state.players) {
     const newP = state.players[id];
     const oldP = players[id];
     if (newP.reloading && (!oldP || !oldP.reloading)) {
@@ -343,12 +286,8 @@ socket.on("state", state => {
     }
   }
 
-  Object.keys(state.players).forEach(id => {
-    if (players[id]) {
-      Object.assign(players[id], state.players[id]);
-    } else {
-      players[id] = state.players[id];
-    }
+  Object.entries(state.players).forEach(([id, newP]) => {
+    players[id] = players[id] ? Object.assign(players[id], newP) : newP;
   });
   bullets = state.bullets;
   walls = state.walls;
@@ -366,15 +305,15 @@ socket.on("slashEffect", data => {
   });
 });
 
-// Rejoindre le jeu
 function joinGame() {
   const input = document.getElementById("pseudoInput");
-  if (!input.value.trim()) {
+  const pseudo = input.value.trim();
+  if (!pseudo) {
     alert("Veuillez entrer un pseudo !");
     return;
   }
-  playerName = input.value.trim();
-  socket.emit("setName", playerName); // Ici, informe le serveur du pseudo et join la partie
+  playerName = pseudo;
+  socket.emit("setName", playerName);
 
   hasJoinedGame = true;
 
@@ -392,6 +331,5 @@ function joinGame() {
 
   document.getElementById("joinButton").disabled = true;
 }
-
 
 document.getElementById("joinButton").addEventListener("click", joinGame);
