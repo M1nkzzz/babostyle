@@ -6,9 +6,7 @@ const compression = require("compression");
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
-  perMessageDeflate: {
-    threshold: 512
-  }
+  perMessageDeflate: { threshold: 512 }
 });
 
 const PORT = 3000;
@@ -55,29 +53,15 @@ io.on("connection", socket => {
   const { x, y } = getSafeSpawnPosition();
   let player = null;
 
-  socket.on('setName', (name) => {
-    if (player) return; // déjà créé
-    player = {
-      id: socket.id,
-      name: name
-    };
+  socket.on('setName', name => {
+    if (player) return;
+    player = { id: socket.id, name };
     players.set(socket.id, {
-      id: socket.id,
-      x, y,
-      angle: 0,
-      health: 100,
-      ammo: 15,
-      reloading: false,
-      dead: false,
-      input: { up: false, down: false, left: false, right: false },
-      dashing: false,
-      lastDash: 0,
-      name: name || "Anonymous",
-      kills: 0,
-      deaths: 0
+      id: socket.id, x, y, angle: 0, health: 100, ammo: 15, reloading: false,
+      dead: false, input: { up: false, down: false, left: false, right: false },
+      dashing: false, lastDash: 0, name: name || "Anonymous", kills: 0, deaths: 0
     });
 
-    // Envoie init au joueur avec son id, etc.
     socket.emit("init", { id: socket.id, players: Object.fromEntries(players), bullets, walls });
     socket.broadcast.emit("newPlayer", players.get(socket.id));
   });
@@ -133,7 +117,7 @@ io.on("connection", socket => {
     if (player.lastSlash && now - player.lastSlash < 1500) return;
     player.lastSlash = now;
 
-    for (let [_, target] of players) {
+    for (let target of players.values()) {
       if (target.id !== player.id && !target.dead) {
         const dist = Math.hypot(target.x - player.x, target.y - player.y);
         if (dist < 50) {
@@ -175,18 +159,16 @@ setInterval(() => {
       const newX = p.x + dx * speed;
       const newY = p.y + dy * speed;
 
-      // Collision avec murs
       const collidesWithWall = walls.some(w =>
         newX + 20 > w.x && newX - 20 < w.x + w.width &&
         newY + 20 > w.y && newY - 20 < w.y + w.height
       );
 
-      // Collision avec autres joueurs
       let collidesWithPlayer = false;
       for (let other of players.values()) {
         if (other.id !== p.id && !other.dead) {
           const dist = Math.hypot(other.x - newX, other.y - newY);
-          if (dist < 40) { // 20 + 20 = somme des rayons
+          if (dist < 40) {
             collidesWithPlayer = true;
             break;
           }
@@ -200,8 +182,7 @@ setInterval(() => {
     }
   }
 
-  // Gestion des balles
-  for (let b of bullets) {
+  bullets = bullets.filter(b => {
     const newX = b.x + Math.cos(b.angle) * 10;
     const newY = b.y + Math.sin(b.angle) * 10;
 
@@ -210,10 +191,7 @@ setInterval(() => {
       newY > w.y && newY < w.y + w.height
     );
 
-    if (hitsWall) {
-      b.hit = true;
-      continue;
-    }
+    if (hitsWall) return false;
 
     b.x = newX;
     b.y = newY;
@@ -221,7 +199,6 @@ setInterval(() => {
     for (let p of players.values()) {
       if (p.id !== b.owner && !p.dead) {
         if (Math.hypot(p.x - b.x, p.y - b.y) < 20) {
-          b.hit = true;
           p.health -= 10;
           if (p.health <= 0 && !p.dead && !p.respawning) {
             p.dead = true;
@@ -229,10 +206,9 @@ setInterval(() => {
             const owner = players.get(b.owner);
             if (owner) owner.kills++;
             p.deaths++;
-    
-            const playerId = p.id;
+
             setTimeout(() => {
-              const player = players.get(playerId);
+              const player = players.get(p.id);
               if (!player) return;
               const { x, y } = getSafeSpawnPosition();
               player.x = x;
@@ -245,13 +221,14 @@ setInterval(() => {
               io.emit('playerRespawn', { id: player.id, x: player.x, y: player.y });
             }, 3000);
           }
+          return false;
         }
       }
     }
-  }
+    return true;
+  });
 
-  bullets = bullets.filter(b => !b.hit);
   io.emit("state", { players: Object.fromEntries(players), bullets, walls });
 }, TICK_RATE);
 
-server.listen(PORT, "0.0.0.0", () => console.log("Serveur : http://localhost:" + PORT));
+server.listen(PORT, "0.0.0.0", () => console.log(`Serveur : http://localhost:${PORT}`));
